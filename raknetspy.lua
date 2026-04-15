@@ -761,20 +761,16 @@ raknet.add_send_hook(function(packet)
 				updateCodeDisplay()
 			end)
 		else
-			-- Update existing (group by ID, update to most recent)
 			local data = trackedRemotes[remoteID]
 			data.count = data.count + 1
 			data.clean = cleanText
 			data.binary = binaryText
-			data.raw = packet.AsString
-			data.priority = packet.Priority
-			data.reliability = packet.Reliability
-			data.channel = packet.OrderingChannel
 			
 			if data.countLabel then
 				data.countLabel.Text = data.count .. "x"
 			end
 			
+			-- Refresh the code display only when the remote is currently selected
 			if selectedRemoteID == remoteID then
 				updateCodeDisplay()
 			end
