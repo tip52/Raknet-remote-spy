@@ -647,7 +647,7 @@ if canChatWith then
 		if not mapperWaitThread or packet.PacketId ~= 131 then return end
 		local bytes = packet.AsArray
 		if type(bytes) ~= "table" then return end
-		if (bytes[8] ~= 228 and bytes[8] ~= 241) or bytes[9] ~= 15 then return end
+		if (bytes[8] ~= 249 and bytes[8] ~= 6) then return end
 		if mapperFilterId and bytes[4] ~= mapperFilterId then return end
 		local thread = mapperWaitThread
 		mapperWaitThread = nil
@@ -996,8 +996,8 @@ raknet.add_send_hook(function(packet)
 	local typeByte = arr[8]
 	local constant = arr[9]
 	
-	if (typeByte == 228 or typeByte == 241) and constant == 15 then
-		local callType = (typeByte == 228) and "Fire" or "Invoke"
+	if (typeByte == 249 or typeByte == 6) then
+		local callType = (typeByte == 249) and "Fire" or "Invoke"
 		local binaryText = table.concat(arr, " ")
 		local callCode, args = buildRemoteCode(arr, remoteID, callType)
 		
