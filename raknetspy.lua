@@ -1,4 +1,3 @@
--- FRVGMXNT GUI2LUA CONVERTER 1.2. Like pls!
 local ScreenGui = {
 	ScreenGui = Instance.new("ScreenGui"),
 	Frame = Instance.new("Frame"),
@@ -39,7 +38,7 @@ local ScreenGui = {
 	code = Instance.new("TextBox"),
 }
 
-ScreenGui.ScreenGui.Parent = game.Players.LocalPlayer:WaitForChild("PlayerGui")
+ScreenGui.ScreenGui.Parent = gethui and gethui() or cloneref(game:GetService("CoreGui"))
 ScreenGui.Frame.Parent = ScreenGui.ScreenGui
 ScreenGui.UICorner.Parent = ScreenGui.Frame
 ScreenGui.title.Parent = ScreenGui.Frame
