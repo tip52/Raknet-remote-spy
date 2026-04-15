@@ -191,7 +191,7 @@ ScreenGui.Invoke.Size = UDim2.new(0, 150, 0, 25)
 ScreenGui.Invoke.BackgroundColor3 = Color3.fromRGB(34,34,34)
 ScreenGui.Invoke.BackgroundTransparency = 0
 ScreenGui.Invoke.Text = "234"
-ScreenGui.Invoke.TextScaled = false
+ScreenGui.Invoke.TextScaled = true
 ScreenGui.Invoke.TextSize = 14
 ScreenGui.Invoke.Font = Enum.Font.SourceSans
 ScreenGui.Invoke.TextColor3 = Color3.fromRGB(255,255,255)
@@ -264,7 +264,7 @@ ScreenGui.Fire.Size = UDim2.new(0, 150, 0, 25)
 ScreenGui.Fire.BackgroundColor3 = Color3.fromRGB(34,34,34)
 ScreenGui.Fire.BackgroundTransparency = 0
 ScreenGui.Fire.Text = "234"
-ScreenGui.Fire.TextScaled = false
+ScreenGui.Fire.TextScaled = true
 ScreenGui.Fire.TextSize = 14
 ScreenGui.Fire.Font = Enum.Font.SourceSans
 ScreenGui.Fire.TextColor3 = Color3.fromRGB(255,255,255)
@@ -610,6 +610,140 @@ ScreenGui.UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(f
 	ScreenGui.remotes.CanvasSize = UDim2.new(0, 0, 0, ScreenGui.UIListLayout.AbsoluteContentSize.Y + 15)
 end)
 
+-- Network ID Mapper --
+
+local canChatWith = game:GetService("RobloxReplicatedStorage"):FindFirstChild("CanChatWith")
+local MAPPER_ARG_BYTE = 13
+local MAPPER_TIMEOUT  = 0.4
+local MAPPER_RETRIES  = 3
+
+local networkIdToInstance = {}  -- [numericId] -> Instance
+local instanceToNetworkId = {}  -- [Instance]  -> numericId
+local mappingComplete = false   -- set true once the mapper finishes (or if CanChatWith missing)
+
+-- Returns the Instance for a numeric network ID, or nil
+local function getInstance(networkId)
+	return networkIdToInstance[networkId]
+end
+
+-- Returns the best display label for a numeric (or string) remote ID
+local function getRemoteLabel(remoteIDStr)
+	local numId = tonumber(remoteIDStr)
+	if numId then
+		local inst = networkIdToInstance[numId]
+		if inst then
+			return inst.Name
+		end
+	end
+	return remoteIDStr  -- fallback: raw ID
+end
+
+if canChatWith then
+	-- Separate hook just for the mapper — stays alive forever
+	local mapperWaitThread = nil
+	local mapperFilterId  = nil
+
+	raknet.add_send_hook(function(packet)
+		if not mapperWaitThread or packet.PacketId ~= 131 then return end
+		local bytes = packet.AsArray
+		if type(bytes) ~= "table" then return end
+		if (bytes[8] ~= 228 and bytes[8] ~= 241) or bytes[9] ~= 15 then return end
+		if mapperFilterId and bytes[4] ~= mapperFilterId then return end
+		local thread = mapperWaitThread
+		mapperWaitThread = nil
+		coroutine.resume(thread, bytes)
+	end)
+
+	local function mapperCapture(fireFunc)
+		local thread = coroutine.running()
+		mapperWaitThread = thread
+		fireFunc()
+		local handle = task.delay(MAPPER_TIMEOUT, function()
+			if mapperWaitThread == thread then
+				mapperWaitThread = nil
+				coroutine.resume(thread, nil)
+			end
+		end)
+		local bytes = coroutine.yield()
+		if bytes then task.cancel(handle) end
+		return bytes
+	end
+
+	task.spawn(function()
+		-- Calibration: find the consistent argByte value and ccNetId
+		local calibrationResults = {}
+		local ccNetId = nil
+		for _ = 1, 6 do
+			local bytes = mapperCapture(function()
+				pcall(function() canChatWith:FireServer(canChatWith) end)
+			end)
+			if bytes then
+				ccNetId = bytes[4]
+				table.insert(calibrationResults, bytes[MAPPER_ARG_BYTE])
+			end
+		end
+
+		local consistent = calibrationResults[1] ~= nil
+		for _, v in ipairs(calibrationResults) do
+			if v ~= calibrationResults[1] then consistent = false end
+		end
+
+		if not consistent then
+			warn("[Mapper] Calibration failed - remote name resolution disabled")
+			return
+		end
+
+		mapperFilterId = ccNetId
+
+		-- Mapping phase: scan every remote and record its network ID
+		local function getAllRemotes()
+			local list = {}
+			local function scan(parent)
+				for _, child in ipairs(parent:GetChildren()) do
+					if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
+						list[#list + 1] = child
+					end
+					scan(child)
+				end
+			end
+			scan(game)
+			return list
+		end
+
+		for _, remote in ipairs(getAllRemotes()) do
+			local networkId = nil
+			for _ = 1, MAPPER_RETRIES do
+				local bytes = mapperCapture(function()
+					pcall(function() canChatWith:FireServer(remote) end)
+				end)
+				if bytes then
+					networkId = bytes[MAPPER_ARG_BYTE]
+					break
+				end
+			end
+
+			if networkId then
+				networkIdToInstance[networkId] = remote
+				instanceToNetworkId[remote] = networkId
+
+				-- If the spy already logged this remote with just an ID, update its button label
+				local idStr = tostring(networkId)
+				if trackedRemotes and trackedRemotes[idStr] and trackedRemotes[idStr].button then
+					trackedRemotes[idStr].button.Text = remote.Name
+				end
+			end
+		end
+
+		-- Clear the filter so the mapper hook doesn't interfere with normal spying
+		mapperFilterId = nil
+		mappingComplete = true
+		print("[Mapper] Done " .. tostring(#networkIdToInstance) .. " remotes mapped, spy now active")
+	end)
+else
+	warn("[Mapper] CanChatWith not found, remote name resolution disabled, spy starting")
+	mappingComplete = true  -- no mapper, start spying right away
+end
+
 -- Packet Spy Logic --
 
 local trackedRemotes = {}
@@ -629,6 +763,143 @@ local function getCleanString(arr)
 	return table.concat(chars)
 end
 
+-- Extracts typed arguments from packet bytes.
+-- Type 0x02: string  -> 0x02 <length> <ascii chars...>
+-- Type 0x0C (12): number -> 0x0C <8 bytes little-endian IEEE 754 double>
+local function extractArgs(bytes)
+	local args = {}
+	local i = 1
+	while i <= #bytes do
+		if bytes[i] == 2 then
+			-- String argument
+			local len = bytes[i + 1]
+			if len and (i + 1 + len) <= #bytes then
+				local chars = {}
+				local valid = true
+				for j = 1, len do
+					local b = bytes[i + 1 + j]
+					if b < 32 or b > 126 then
+						valid = false
+						break
+					end
+					table.insert(chars, string.char(b))
+				end
+				if valid and #chars > 0 then
+					table.insert(args, { kind = "string", value = table.concat(chars) })
+					i = i + 2 + len
+				else
+					i = i + 1
+				end
+			else
+				i = i + 1
+			end
+		elseif bytes[i] == 12 then
+			-- Number argument (8-byte little-endian double)
+			if (i + 8) <= #bytes then
+				local raw = ""
+				for j = 1, 8 do
+					raw = raw .. string.char(bytes[i + j])
+				end
+				local ok, value = pcall(string.unpack, "<d", raw)
+				if ok then
+					table.insert(args, { kind = "number", value = value })
+					i = i + 9
+				else
+					i = i + 1
+				end
+			else
+				i = i + 1
+			end
+		else
+			i = i + 1
+		end
+	end
+	return args
+end
+
+-- Builds the full path string for an instance
+local function buildInstancePath(instance)
+	local parts = {}
+	local current = instance
+	while current and current ~= game do
+		table.insert(parts, 1, current.Name)
+		current = current.Parent
+		if not current then break end
+	end
+	-- Find where a known service starts so we can use GetService
+	local serviceNames = {
+		"ReplicatedStorage", "ReplicatedFirst", "Workspace",
+		"Players", "StarterGui", "StarterPack", "StarterPlayer",
+		"Lighting", "SoundService", "RunService", "TweenService"
+	}
+	local result = ""
+	if #parts > 0 then
+		local serviceName = parts[1]
+		local isService = false
+		for _, sn in ipairs(serviceNames) do
+			if sn == serviceName then isService = true break end
+		end
+		if isService then
+			result = 'game:GetService("' .. serviceName .. '")'
+			for i = 2, #parts do
+				result = result .. ':WaitForChild("' .. parts[i] .. '")'
+			end
+		else
+			result = 'game'
+			for _, part in ipairs(parts) do
+				result = result .. ':WaitForChild("' .. part .. '")'
+			end
+		end
+	else
+		result = "game"
+	end
+	return result
+end
+
+-- Reconstructs the Lua remote call from a packet
+local function buildRemoteCode(arr, remoteIDStr, callType)
+	local args = extractArgs(arr)
+	local method = (callType == "Invoke") and "InvokeServer" or "FireServer"
+
+	-- Build the remote path
+	local numId = tonumber(remoteIDStr)
+	local remotePath
+	if numId and networkIdToInstance[numId] then
+		remotePath = buildInstancePath(networkIdToInstance[numId])
+	else
+		remotePath = '-- remote id ' .. remoteIDStr .. ' (not mapped)'
+	end
+
+	-- Format args as a Lua table literal with proper types
+	local argLines = {}
+	for i, arg in ipairs(args) do
+		local formatted
+		if arg.kind == "string" then
+			formatted = '"' .. arg.value .. '"'
+		elseif arg.kind == "number" then
+			-- Show integers without a decimal point
+			if arg.value == math.floor(arg.value) and math.abs(arg.value) < 1e15 then
+				formatted = tostring(math.floor(arg.value))
+			else
+				formatted = tostring(arg.value)
+			end
+		else
+			formatted = tostring(arg.value)
+		end
+		table.insert(argLines, '\t[' .. i .. '] = ' .. formatted)
+	end
+
+	local code = ""
+	if #args > 0 then
+		code = 'local args = {\n' .. table.concat(argLines, ',\n') .. '\n}\n\n'
+		code = code .. remotePath .. ':' .. method .. '(table.unpack(args))'
+	else
+		code = remotePath .. ':' .. method .. '()'
+	end
+
+	return code, args
+end
+
 local function updateCodeDisplay()
 	if not selectedRemoteID then return end
 	local data = trackedRemotes[selectedRemoteID]
@@ -637,7 +908,7 @@ local function updateCodeDisplay()
 	if binaryMode then
 		ScreenGui.code.Text = data.binary
 	else
-		ScreenGui.code.Text = data.clean
+		ScreenGui.code.Text = data.callCode
 	end
 end
 
@@ -707,7 +978,7 @@ end)
 
 -- Hook
 raknet.add_send_hook(function(packet)
-	if not isSpying or packet.PacketId ~= 131 then return end
+	if not isSpying or not mappingComplete or packet.PacketId ~= 131 then return end
 	
 	local arr = packet.AsArray
 	if type(arr) ~= "table" then return end
@@ -727,15 +998,15 @@ raknet.add_send_hook(function(packet)
 	
 	if (typeByte == 228 or typeByte == 241) and constant == 15 then
 		local callType = (typeByte == 228) and "Fire" or "Invoke"
-		local cleanText = getCleanString(arr)
 		local binaryText = table.concat(arr, " ")
+		local callCode, args = buildRemoteCode(arr, remoteID, callType)
 		
 		if not trackedRemotes[remoteID] then
 			-- Create new UI element
 			local template = (callType == "Invoke") and invokeTemplate or fireTemplate
 			local newButton = template:Clone()
 			newButton.Parent = ScreenGui.remotes
-			newButton.Text = remoteID
+			newButton.Text = getRemoteLabel(remoteID)
 			newButton.Visible = true
 			
 			local countLabel = newButton:FindFirstChildOfClass("TextLabel")
@@ -745,15 +1016,16 @@ raknet.add_send_hook(function(packet)
 			
 			trackedRemotes[remoteID] = {
 				count = 1,
-				clean = cleanText,
+				callCode = callCode,
 				binary = binaryText,
-				raw = packet.AsString, -- Store string version for resending
+				raw = packet.AsString,
 				priority = packet.Priority,
 				reliability = packet.Reliability,
 				channel = packet.OrderingChannel,
 				button = newButton,
 				countLabel = countLabel,
-				remoteID = remoteID
+				remoteID = remoteID,
+				callType = callType,
 			}
 			
 			newButton.MouseButton1Click:Connect(function()
@@ -763,7 +1035,7 @@ raknet.add_send_hook(function(packet)
 		else
 			local data = trackedRemotes[remoteID]
 			data.count = data.count + 1
-			data.clean = cleanText
+			data.callCode = callCode
 			data.binary = binaryText
 			
 			if data.countLabel then
