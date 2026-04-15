@@ -520,6 +520,34 @@ ScreenGui.code.Visible = true
 ScreenGui.code.AnchorPoint = Vector2.new(1, 1)
 ScreenGui.code.ClipsDescendants = false
 
+-- Clear Button
+ScreenGui.Clear = Instance.new("TextButton")
+ScreenGui.Clear.Name = "Clear"
+ScreenGui.Clear.Parent = ScreenGui.Frame_4
+ScreenGui.Clear.BackgroundColor3 = Color3.fromRGB(22,22,22)
+ScreenGui.Clear.Size = UDim2.new(0.3, 0, 0.2, 0)
+ScreenGui.Clear.Font = Enum.Font.SourceSans
+ScreenGui.Clear.Text = "Clear Logs"
+ScreenGui.Clear.TextColor3 = Color3.fromRGB(175,0,3)
+ScreenGui.Clear.TextSize = 14
+local clearCorner = Instance.new("UICorner")
+clearCorner.CornerRadius = UDim.new(0, 2)
+clearCorner.Parent = ScreenGui.Clear
+
+-- Resend Button
+ScreenGui.Resend = Instance.new("TextButton")
+ScreenGui.Resend.Name = "Resend"
+ScreenGui.Resend.Parent = ScreenGui.Frame_4
+ScreenGui.Resend.BackgroundColor3 = Color3.fromRGB(22,22,22)
+ScreenGui.Resend.Size = UDim2.new(0.3, 0, 0.2, 0)
+ScreenGui.Resend.Font = Enum.Font.SourceSans
+ScreenGui.Resend.Text = "Resend"
+ScreenGui.Resend.TextColor3 = Color3.fromRGB(175,0,3)
+ScreenGui.Resend.TextSize = 14
+local resendCorner = Instance.new("UICorner")
+resendCorner.CornerRadius = UDim.new(0, 2)
+resendCorner.Parent = ScreenGui.Resend
+
 -- Functionality --
 
 -- Close button
@@ -576,34 +604,6 @@ UserInputService.InputChanged:Connect(function(input)
 		gui.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 	end
 end)
-
--- Clear Button
-ScreenGui.Clear = Instance.new("TextButton")
-ScreenGui.Clear.Name = "Clear"
-ScreenGui.Clear.Parent = ScreenGui.Frame_4
-ScreenGui.Clear.BackgroundColor3 = Color3.fromRGB(22,22,22)
-ScreenGui.Clear.Size = UDim2.new(0.3, 0, 0.2, 0)
-ScreenGui.Clear.Font = Enum.Font.SourceSans
-ScreenGui.Clear.Text = "Clear Logs"
-ScreenGui.Clear.TextColor3 = Color3.fromRGB(175,0,3)
-ScreenGui.Clear.TextSize = 14
-local clearCorner = Instance.new("UICorner")
-clearCorner.CornerRadius = UDim.new(0, 2)
-clearCorner.Parent = ScreenGui.Clear
-
--- Resend Button
-ScreenGui.Resend = Instance.new("TextButton")
-ScreenGui.Resend.Name = "Resend"
-ScreenGui.Resend.Parent = ScreenGui.Frame_4
-ScreenGui.Resend.BackgroundColor3 = Color3.fromRGB(22,22,22)
-ScreenGui.Resend.Size = UDim2.new(0.3, 0, 0.2, 0)
-ScreenGui.Resend.Font = Enum.Font.SourceSans
-ScreenGui.Resend.Text = "Resend"
-ScreenGui.Resend.TextColor3 = Color3.fromRGB(175,0,3)
-ScreenGui.Resend.TextSize = 14
-local resendCorner = Instance.new("UICorner")
-resendCorner.CornerRadius = UDim.new(0, 2)
-resendCorner.Parent = ScreenGui.Resend
 
 -- Scrolling scaling
 ScreenGui.UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
